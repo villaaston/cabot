@@ -1,5 +1,8 @@
 import logging
 import random
+import re
+
+import requests
 
 from celery import Celery
 from celery._state import set_default_app
@@ -110,3 +113,50 @@ def clean_db(days_to_retain=60):
 
     clean_db.apply_async(kwargs={'days_to_retain': days_to_retain}, countdown=3)
 
+@task()
+def http_status_check(result, check):
+    """
+    Runs a http status test on check.endpoint using the check param instance
+
+    :param StatusCheckResult result: a result instance to update with the
+                                     results of the task
+
+    :param HttpStatusCheck check:    http status check instance containing the
+                                     configuration for the http check task
+
+    :return: the result param updated with the results of the http check
+    """
+    auth = None
+    if check.username or check.password:
+        auth = (check.username, check.password)
+
+    try:
+        resp = requests.get(
+            check.endpoint,
+            timeout=check.timeout,
+            verify=check.verify_ssl_certificate,
+            auth=auth,
+            headers={
+                "User-Agent": settings.HTTP_USER_AGENT,
+            },
+        )
+    except requests.RequestException as e:
+        result.error = u'Request error occurred: %s' % (e.message,)
+        result.succeeded = False
+    else:
+        if check.status_code and resp.status_code != int(check.status_code):
+            result.error = u'Wrong code: got %s (expected %s)' % (
+                resp.status_code, int(check.status_code))
+            result.succeeded = False
+            result.raw_data = resp.content
+        elif check.text_match:
+            if not re.search(check.text_match, resp.content):
+                result.error = u'Failed to find match regex /%s/ in response body' % check.text_match
+                result.raw_data = resp.content
+                result.succeeded = False
+            else:
+                result.succeeded = True
+        else:
+            result.succeeded = True
+
+    return result

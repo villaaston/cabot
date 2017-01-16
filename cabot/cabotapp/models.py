@@ -23,7 +23,7 @@ from .alert import (
 from .calendar import get_events
 from .graphite import parse_metric
 from .jenkins import get_job_status
-from .tasks import update_service, update_instance
+from .tasks import http_status_check, update_service, update_instance
 
 RAW_DATA_LIMIT = 5000
 
@@ -725,39 +725,7 @@ class HttpStatusCheck(StatusCheck):
     def _run(self):
         result = StatusCheckResult(check=self)
 
-        auth = None
-        if self.username or self.password:
-            auth = (self.username, self.password)
-
-        try:
-            resp = requests.get(
-                self.endpoint,
-                timeout=self.timeout,
-                verify=self.verify_ssl_certificate,
-                auth=auth,
-                headers={
-                    "User-Agent": settings.HTTP_USER_AGENT,
-                },
-            )
-        except requests.RequestException as e:
-            result.error = u'Request error occurred: %s' % (e.message,)
-            result.succeeded = False
-        else:
-            if self.status_code and resp.status_code != int(self.status_code):
-                result.error = u'Wrong code: got %s (expected %s)' % (
-                    resp.status_code, int(self.status_code))
-                result.succeeded = False
-                result.raw_data = resp.content
-            elif self.text_match:
-                if not re.search(self.text_match, resp.content):
-                    result.error = u'Failed to find match regex /%s/ in response body' % self.text_match
-                    result.raw_data = resp.content
-                    result.succeeded = False
-                else:
-                    result.succeeded = True
-            else:
-                result.succeeded = True
-        return result
+        return http_status_check(result, self)
 
 
 class JenkinsStatusCheck(StatusCheck):

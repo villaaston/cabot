@@ -13,6 +13,7 @@ from cabot.cabotapp.models import (
     HttpStatusCheck, ICMPStatusCheck, Service, Instance,
     StatusCheckResult, minimize_targets)
 from cabot.cabotapp.calendar import get_events
+from cabot.cabotapp.tasks import http_status_check
 from cabot.cabotapp.views import StatusCheckReportForm
 from django.contrib.auth.models import Permission
 from django.contrib.auth.models import User
@@ -407,6 +408,47 @@ class TestCheckRun(LocalTestCase):
         self.assertFalse(self.http_check.last_result().succeeded)
         self.assertEqual(self.http_check.calculated_status,
                          Service.CALCULATED_FAILING_STATUS)
+
+
+class TestHttpCheckTask(LocalTestCase):
+
+    @patch('cabot.cabotapp.tasks.requests.get', fake_http_200_response)
+    def test_http_run(self):
+        result = http_status_check(
+            StatusCheckResult(check=self.http_check),
+            self.http_check
+        )
+        self.assertTrue(result.succeeded)
+
+        self.http_check.text_match = u'blah blah'
+        result = http_status_check(
+            StatusCheckResult(check=self.http_check),
+            self.http_check
+        )
+        self.assertFalse(result.succeeded)
+        # Unicode
+        self.http_check.text_match = u'как закалялась сталь'
+        result = http_status_check(
+            StatusCheckResult(check=self.http_check),
+            self.http_check
+        )
+        self.assertFalse(result.succeeded)
+
+    @patch('cabot.cabotapp.tasks.requests.get', throws_timeout)
+    def test_timeout_handling_in_http(self):
+        result = http_status_check(
+            StatusCheckResult(check=self.http_check),
+            self.http_check
+        )
+        self.assertFalse(result.succeeded)
+
+    @patch('cabot.cabotapp.tasks.requests.get', fake_http_404_response)
+    def test_http_run_bad_resp(self):
+        result = http_status_check(
+            StatusCheckResult(check=self.http_check),
+            self.http_check
+        )
+        self.assertFalse(result.succeeded)
 
 
 class TestInstances(LocalTestCase):
