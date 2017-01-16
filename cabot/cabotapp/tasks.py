@@ -8,6 +8,7 @@ from celery import Celery
 from celery._state import set_default_app
 from celery.task import task
 from django.conf import settings
+from django.core.cache import cache
 from django.utils import timezone
 
 celery = Celery(__name__)
@@ -113,8 +114,9 @@ def clean_db(days_to_retain=60):
 
     clean_db.apply_async(kwargs={'days_to_retain': days_to_retain}, countdown=3)
 
+
 @task()
-def http_status_check(result, check):
+def http_status_check(result_or_id, check_or_id):
     """
     Runs a http status test on check.endpoint using the check param instance
 
@@ -126,6 +128,19 @@ def http_status_check(result, check):
 
     :return: the result param updated with the results of the http check
     """
+    from .models import StatusCheckResult, StatusCheck
+    # TODO: tidy up the cached object after fetching this last time or leave
+    # to redis?
+    if not isinstance(result_or_id, StatusCheckResult):
+        result = cache.get('result: ' + result_or_id)
+    else:
+        result = result_or_id
+
+    if not isinstance(check_or_id, StatusCheck):
+        check = cache.get('check: ' + check_or_id)
+    else:
+        check = check_or_id
+
     auth = None
     if check.username or check.password:
         auth = (check.username, check.password)
@@ -159,4 +174,22 @@ def http_status_check(result, check):
         else:
             result.succeeded = True
 
+    cache.set('result: ' + str(result.id), result)
+
     return result
+
+
+@task()
+def collect_check_results(result_or_id):
+    from .models import StatusCheckResult
+    # Todo tidy up the cached object after fetching this last time?
+    if not isinstance(result_or_id, StatusCheckResult):
+        result = cache.get('result: ' + result_or_id)
+    else:
+        result = result_or_id
+
+    finish = timezone.now()
+    result.time_complete = finish
+    result.save()
+    result.check.last_run = finish
+    result.check.save()

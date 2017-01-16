@@ -20,7 +20,7 @@ from django.contrib.auth.models import User
 from django.core import mail
 from django.core.urlresolvers import reverse
 from django.test.client import Client
-from django.test.utils import override_settings
+from django.test.utils import override_settings, collect_check_results
 from django.utils import timezone
 from mock import Mock, patch
 from rest_framework import status, HTTP_HEADER_ENCODING
@@ -449,6 +449,25 @@ class TestHttpCheckTask(LocalTestCase):
             self.http_check
         )
         self.assertFalse(result.succeeded)
+
+    @patch('cabot.cabotapp.tasks.requests.get', fake_http_200_response)
+    def test_e2e_http_run_async(self):
+        checkresults = self.http_check.statuscheckresult_set.all()
+        self.assertEqual(len(checkresults), 0)
+        self.http_check.run_async()
+
+        checkresults = self.http_check.statuscheckresult_set.all()
+        self.assertEqual(len(checkresults), 1)
+        self.assertFalse(self.http_check.last_result().succeeded)
+
+        result_id = str(self.http_check.last_result().id)
+        check_id = str(self.http_check.id)
+        http_status_check(result_id, check_id)
+        collect_check_results(result_id)
+
+        self.assertTrue(self.http_check.last_result().succeeded)
+        self.assertEqual(self.http_check.calculated_status,
+                         Service.CALCULATED_PASSING_STATUS)
 
 
 class TestInstances(LocalTestCase):

@@ -1,15 +1,14 @@
 import itertools
 import json
-import re
 import subprocess
 import time
 from datetime import timedelta
 
-import requests
 from celery.exceptions import SoftTimeLimitExceeded
 from celery.utils.log import get_task_logger
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.db import models
 from django.db.models.signals import post_save
 from django.utils import timezone
@@ -23,7 +22,10 @@ from .alert import (
 from .calendar import get_events
 from .graphite import parse_metric
 from .jenkins import get_job_status
-from .tasks import http_status_check, update_service, update_instance
+from .tasks import (
+    collect_check_results, http_status_check, update_instance,
+    update_service
+)
 
 RAW_DATA_LIMIT = 5000
 
@@ -726,6 +728,30 @@ class HttpStatusCheck(StatusCheck):
         result = StatusCheckResult(check=self)
 
         return http_status_check(result, self)
+
+    def run_async(self):
+        """
+        Caches this check and a result. Then runs this HttpStatusCheck as a
+        celery task and the collect_check_results when it's complete
+        """
+        logger.debug('Running async HTTP check.')
+        # TODO: What happens when a check is failed for a few seconds and then
+        # suceeds? Probably need an intermediary state of "in progress"
+        result = StatusCheckResult(check=self)
+        result.time = timezone.now()
+        result.save()
+
+        result_id = str(result.id)
+        check_id = str(self.id)
+
+        cache.set('result: ' + result_id, result)
+        cache.set('check: ' + check_id, self)
+        logger.debug('result: %r, check: %r', (result, self))
+
+        http_status_check.apply_async(
+            (result_id, check_id),
+            link=collect_check_results.si(result_id)
+        )
 
 
 class JenkinsStatusCheck(StatusCheck):
