@@ -6,6 +6,8 @@ import requests
 
 from celery import Celery
 from celery._state import set_default_app
+from celery.exceptions import SoftTimeLimitExceeded
+from celery.result import AsyncResult
 from celery.task import task
 from django.conf import settings
 from django.core.cache import cache
@@ -166,7 +168,7 @@ def http_status_check(result_or_id, check_or_id):
             result.raw_data = resp.content
         elif check.text_match:
             if not re.search(check.text_match, resp.content):
-                result.error = u'Failed to find match regex /%s/ in response body' % check.text_match
+                result.error = u'Failed to find match regex /%s/ in response body' % check.text_match  # noqa
                 result.raw_data = resp.content
                 result.succeeded = False
             else:
@@ -193,3 +195,23 @@ def collect_check_results(result_or_id):
     result.save()
     result.check.last_run = finish
     result.check.save()
+
+
+@task(ignore_result=True)
+def check_task_error(task_id, result_id):
+    check_result = cache.get('result: ' + result_id)
+    task_result = AsyncResult(task_id)
+    try:
+        # Gets the task result, and propagates any exception raised.
+        task_result.get(propagate=True)
+    except SoftTimeLimitExceeded:
+        check_result.error = u'Error in performing check: Celery soft time limit exceeded'  # noqa
+        check_result.succeeded = False
+    except Exception as e:
+        logger.error(
+            u"Error performing check: %s" % (e.message)
+        )
+        check_result.error = u'Error in performing check: %s' % (e.message)
+        check_result.succeeded = False
+
+    collect_check_results(check_result)

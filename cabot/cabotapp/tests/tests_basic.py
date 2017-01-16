@@ -4,6 +4,7 @@ import base64
 import json
 import time
 from datetime import timedelta, date
+from unittest import skip
 
 import os
 import requests
@@ -465,6 +466,21 @@ class TestHttpCheckTask(LocalTestCase):
         http_status_check(result_id, check_id)
         collect_check_results(result_id)
 
+        self.assertTrue(self.http_check.last_result().succeeded)
+        self.assertEqual(self.http_check.calculated_status,
+                         Service.CALCULATED_PASSING_STATUS)
+
+    @skip("Linked Celery tasks just won't be fetched eagerly")
+    @patch('cabot.celeryconfig.CELERY_ALWAYS_EAGER', True, create=True)
+    @patch('cabot.cabotapp.tasks.requests.get', fake_http_200_response)
+    def test_celery_http_run_async(self):
+        checkresults = self.http_check.statuscheckresult_set.all()
+        self.assertEqual(len(checkresults), 0)
+
+        self.http_check.run_async()
+
+        checkresults = self.http_check.statuscheckresult_set.all()
+        self.assertEqual(len(checkresults), 1)
         self.assertTrue(self.http_check.last_result().succeeded)
         self.assertEqual(self.http_check.calculated_status,
                          Service.CALCULATED_PASSING_STATUS)

@@ -23,8 +23,8 @@ from .calendar import get_events
 from .graphite import parse_metric
 from .jenkins import get_job_status
 from .tasks import (
-    collect_check_results, http_status_check, update_instance,
-    update_service
+    check_task_error, collect_check_results, http_status_check,
+    update_instance, update_service
 )
 
 RAW_DATA_LIMIT = 5000
@@ -732,7 +732,9 @@ class HttpStatusCheck(StatusCheck):
     def run_async(self):
         """
         Caches this check and a result. Then runs this HttpStatusCheck as a
-        celery task and the collect_check_results when it's complete
+        celery task and the collect_check_results when it's complete.
+
+        If there's an error in either task, check_task_error should be called.
         """
         logger.debug('Running async HTTP check.')
         # TODO: What happens when a check is failed for a few seconds and then
@@ -750,7 +752,8 @@ class HttpStatusCheck(StatusCheck):
 
         http_status_check.apply_async(
             (result_id, check_id),
-            link=collect_check_results.si(result_id)
+            link=collect_check_results.si(result_id),
+            link_error=check_task_error.si(result_id)
         )
 
 
